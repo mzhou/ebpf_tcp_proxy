@@ -1,10 +1,14 @@
 use std::fmt;
 
+use bpf_sys::{
+    bpf_attach_type_BPF_SK_SKB_STREAM_PARSER, bpf_attach_type_BPF_SK_SKB_STREAM_VERDICT,
+};
 use redbpf::load::{Loader, LoaderError};
 
 #[derive(Debug)]
 enum MainError {
     Loader(LoaderError),
+    Map,
 }
 
 impl fmt::Display for MainError {
@@ -15,6 +19,7 @@ impl fmt::Display for MainError {
             "{}",
             match self {
                 Loader(e) => format!("loader {:?}", e),
+                Map => format!("map not found in ebpf program"),
             }
         )
     }
@@ -27,11 +32,13 @@ fn main() -> Result<(), MainError> {
 
     let mut loader = Loader::load(sockmap_parser_elf).map_err(MainError::Loader)?;
     println!("loader created");
-    for _sk_skb in loader.sk_skbs_mut() {
-        println!("found sk_skb");
-    }
-    if let Some(map) =  loader.map_mut("sock_map") {
-        println!("found sock_map");
+    let map = loader.map_mut("sock_map").ok_or(MainError::Map)?;
+    for sk_skb in loader.sk_skbs_mut() {
+        println!("found sk_skb {}", sk_skb.name());
+        match sk_skb.name() {
+            "parser" => sk_skb.attach_map(&map, bpf_attach_type_BPF_SK_SKB_STREAM_PARSER, 0),
+            "verdict" => sk_skb.attach_map(&map, bpf_attach_type_BPF_SK_SKB_STREAM_VERDICT, 0),
+        }?
     }
 
     Ok(())

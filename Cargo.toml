@@ -5,6 +5,7 @@ name = "ebpf_tcp_proxy"
 version = "0.1.0"
 
 [dependencies]
+bpf-sys = { version = "1.3", path = "../redbpf/bpf-sys" }
 cty = "0.2"
 redbpf = { version = "1.3", features = ["load"], path = "../redbpf/redbpf" }
 redbpf-macros = { version = "1.3", path = "../redbpf/redbpf-macros" }
