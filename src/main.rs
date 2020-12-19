@@ -26,8 +26,12 @@ fn main() -> Result<(), MainError> {
     println!("elf is {} bytes", sockmap_parser_elf.len());
 
     let mut loader = Loader::load(sockmap_parser_elf).map_err(MainError::Loader)?;
-    for socket_filter in loader.socket_filters_mut() {
-        println!("found socket_filter");
+    println!("loader created");
+    for _sk_skb in loader.sk_skbs_mut() {
+        println!("found sk_skb");
+    }
+    if let Some(map) =  loader.map_mut("sock_map") {
+        println!("found sock_map");
     }
 
     Ok(())
