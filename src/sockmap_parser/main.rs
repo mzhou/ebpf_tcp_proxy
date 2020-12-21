@@ -27,8 +27,7 @@ fn verdict(skb: *mut __sk_buff) -> i32 {
             remote_ip6: (*skb).remote_ip6,
             local_ip6: (*skb).local_ip6,
             remote_port: (*skb).remote_port,
-            //local_port: (*skb).local_port,
-            local_port: 0,
+            local_port: (*skb).local_port,
         };
         bpf_trace_printk(&core::mem::transmute::<_, [u8; 40]>(key));
         bpf_sk_redirect_hash(

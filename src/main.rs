@@ -76,7 +76,7 @@ fn main() -> Result<(), MainError> {
                 match s.local_addr().map_err(MainError::LocalAddr)? {
                     SocketAddr::V6(la) => {
                         println!("remote {} local {}", a, la);
-                        let key = make_endpoints(a.ip(), la.ip(), a.port(), 0);
+                        let key = make_endpoints(a.ip(), la.ip(), a.port(), la.port());
                         println!("key {:?}", key);
                         let val = s.as_raw_fd();
                         sock_hash.set(key, val);
@@ -106,9 +106,9 @@ fn make_endpoints(
     local_port: u16,
 ) -> Endpoints {
     Endpoints {
-        remote_ip6: unsafe { core::mem::transmute(remote_ip6.octets()) },
-        local_ip6: unsafe { core::mem::transmute(local_ip6.octets()) },
+        remote_ip6: unsafe { core::mem::transmute(remote_ip6.octets()) }, // TODO: safe conversion
+        local_ip6: unsafe { core::mem::transmute(local_ip6.octets()) },   // TODO: safe conversion
         remote_port: u32::swap_bytes(remote_port.into()),
-        local_port: u32::swap_bytes(local_port.into()),
+        local_port: local_port.into(), // host byte order
     }
 }
