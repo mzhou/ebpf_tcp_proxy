@@ -1,6 +1,6 @@
 use std::fmt;
 use std::io::Read;
-use std::net::{SocketAddr, TcpListener};
+use std::net::{Ipv6Addr, SocketAddr, TcpListener};
 use std::os::unix::io::AsRawFd;
 
 use bpf_sys::{
@@ -17,6 +17,7 @@ enum MainError {
     AttachMap(redbpf::Error),
     Bind(std::io::Error),
     Loader(LoaderError),
+    LocalAddr(std::io::Error),
     MapCast,
     Map,
 }
@@ -32,6 +33,7 @@ impl fmt::Display for MainError {
                 AttachMap(e) => format!("attach map {:?}", e),
                 Bind(e) => format!("bind {}", e),
                 Loader(e) => format!("loader {:?}", e),
+                LocalAddr(e) => format!("local_addr {}", e),
                 Map => format!("map not found in ebpf program"),
                 MapCast => format!("map key/value type mismatch"),
             }
@@ -71,24 +73,42 @@ fn main() -> Result<(), MainError> {
         println!("accepted from {}", a);
         match a {
             SocketAddr::V6(a) => {
-                let key = Endpoints{
-                    remote_ip6: unsafe { core::mem::transmute(a.ip().octets()) },
-                    //remote_ip6: [0u32; 4],
-                    local_ip6: [0u32; 4],
-                    remote_port: u32::swap_bytes(a.port().into()),
-                    local_port: 0,
-                };
-                let val = s.as_raw_fd();
-                sock_hash.set(key, val);
-                println!("socket added to map");
-                // wait for close
-                let mut dummy_buf = [0u8; 1];
-                let read_result = s.read(&mut dummy_buf);
-                println!("read has returned {:?}", read_result);
-                sock_hash.delete(key);
-            },
+                match s.local_addr().map_err(MainError::LocalAddr)? {
+                    SocketAddr::V6(la) => {
+                        println!("remote {} local {}", a, la);
+                        let key = make_endpoints(a.ip(), la.ip(), a.port(), 0);
+                        println!("key {:?}", key);
+                        let val = s.as_raw_fd();
+                        sock_hash.set(key, val);
+                        println!("socket added to map");
+                        // wait for close
+                        let mut dummy_buf = [0u8; 1];
+                        let read_result = s.read(&mut dummy_buf);
+                        println!("read has returned {:?}", read_result);
+                        sock_hash.delete(key);
+                    }
+                    SocketAddr::V4(_) => {
+                        println!("ipv4 local addr unsupported, dropping connection");
+                    }
+                }
+            }
             SocketAddr::V4(_) => {
-            },
+                println!("ipv4 remote addr unsupported, dropping connection");
+            }
         }
+    }
+}
+
+fn make_endpoints(
+    remote_ip6: &Ipv6Addr,
+    local_ip6: &Ipv6Addr,
+    remote_port: u16,
+    local_port: u16,
+) -> Endpoints {
+    Endpoints {
+        remote_ip6: unsafe { core::mem::transmute(remote_ip6.octets()) },
+        local_ip6: unsafe { core::mem::transmute(local_ip6.octets()) },
+        remote_port: u32::swap_bytes(remote_port.into()),
+        local_port: u32::swap_bytes(local_port.into()),
     }
 }
