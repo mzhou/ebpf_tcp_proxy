@@ -1,9 +1,8 @@
-// This is where you should define the types shared by the kernel and user
-// space, eg:
-//
-// #[repr(C)]
-// #[derive(Debug)]
-// pub struct SomeEvent {
-//     pub pid: u64,
-//     ...
-// }
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct Endpoints {
+    pub remote_ip6: [u32; 4],
+    pub local_ip6: [u32; 4],
+    pub remote_port: u32,
+    pub local_port: u32,
+}

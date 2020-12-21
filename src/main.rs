@@ -1,6 +1,6 @@
 use std::fmt;
 use std::io::Read;
-use std::net::TcpListener;
+use std::net::{SocketAddr, TcpListener};
 use std::os::unix::io::AsRawFd;
 
 use bpf_sys::{
@@ -8,6 +8,8 @@ use bpf_sys::{
 };
 use redbpf::load::{Loader, LoaderError};
 use redbpf::HashMap;
+
+use ebpf_tcp_proxy::sockmap_parser::Endpoints;
 
 #[derive(Debug)]
 enum MainError {
@@ -44,7 +46,7 @@ fn main() -> Result<(), MainError> {
 
     let loader = Loader::load(sockmap_parser_elf).map_err(MainError::Loader)?;
     println!("loader created");
-    let map = loader.map("sock_map").ok_or(MainError::Map)?;
+    let map = loader.map("sock_hash").ok_or(MainError::Map)?;
     for sk_skb in loader.sk_skbs() {
         println!("found sk_skb {}", sk_skb.name());
         sk_skb
@@ -62,18 +64,31 @@ fn main() -> Result<(), MainError> {
     println!("bpf init done");
 
     // should be SockMap, but api is the same as HashMap, so use it for now
-    let sock_map = HashMap::<i32, i32>::new(map).map_err(|_| MainError::MapCast)?;
+    let sock_hash = HashMap::<Endpoints, i32>::new(map).map_err(|_| MainError::MapCast)?;
     let ss = TcpListener::bind("[::]:1234").map_err(MainError::Bind)?;
     loop {
         let (mut s, a) = ss.accept().map_err(MainError::Accept)?;
         println!("accepted from {}", a);
-        let key = 0;
-        let val = s.as_raw_fd();
-        sock_map.set(key, val);
-        println!("socket added to map");
-        // wait for close
-        let mut dummy_buf = [0u8; 1];
-        let read_result = s.read(&mut dummy_buf);
-        println!("read has returned {:?}", read_result);
+        match a {
+            SocketAddr::V6(a) => {
+                let key = Endpoints{
+                    remote_ip6: unsafe { core::mem::transmute(a.ip().octets()) },
+                    //remote_ip6: [0u32; 4],
+                    local_ip6: [0u32; 4],
+                    remote_port: u32::swap_bytes(a.port().into()),
+                    local_port: 0,
+                };
+                let val = s.as_raw_fd();
+                sock_hash.set(key, val);
+                println!("socket added to map");
+                // wait for close
+                let mut dummy_buf = [0u8; 1];
+                let read_result = s.read(&mut dummy_buf);
+                println!("read has returned {:?}", read_result);
+                sock_hash.delete(key);
+            },
+            SocketAddr::V4(_) => {
+            },
+        }
     }
 }
