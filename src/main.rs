@@ -1,6 +1,6 @@
 use std::fmt;
 use std::io::Read;
-use std::net::{Ipv6Addr, SocketAddr, TcpListener};
+use std::net::{Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, TcpListener};
 use std::os::unix::io::AsRawFd;
 
 use bpf_sys::{
@@ -67,35 +67,23 @@ fn main() -> Result<(), MainError> {
 
     // should be SockMap, but api is the same as HashMap, so use it for now
     let sock_hash = HashMap::<Endpoints, i32>::new(map).map_err(|_| MainError::MapCast)?;
-    let ss = TcpListener::bind("[::]:1234").map_err(MainError::Bind)?;
+    let ss = TcpListener::bind("0.0.0.0:1234").map_err(MainError::Bind)?;
     loop {
-        let (mut s, a) = ss.accept().map_err(MainError::Accept)?;
+        let (mut s, sa) = ss.accept().map_err(MainError::Accept)?;
+        let a = mapped_socket_addr(&sa);
         println!("accepted from {}", a);
-        match a {
-            SocketAddr::V6(a) => {
-                match s.local_addr().map_err(MainError::LocalAddr)? {
-                    SocketAddr::V6(la) => {
-                        println!("remote {} local {}", a, la);
-                        let key = make_endpoints(a.ip(), la.ip(), a.port(), la.port());
-                        println!("key {:?}", key);
-                        let val = s.as_raw_fd();
-                        sock_hash.set(key, val);
-                        println!("socket added to map");
-                        // wait for close
-                        let mut dummy_buf = [0u8; 1];
-                        let read_result = s.read(&mut dummy_buf);
-                        println!("read has returned {:?}", read_result);
-                        sock_hash.delete(key);
-                    }
-                    SocketAddr::V4(_) => {
-                        println!("ipv4 local addr unsupported, dropping connection");
-                    }
-                }
-            }
-            SocketAddr::V4(_) => {
-                println!("ipv4 remote addr unsupported, dropping connection");
-            }
-        }
+        let la = mapped_socket_addr(&s.local_addr().map_err(MainError::LocalAddr)?);
+        println!("remote {} local {}", a, la);
+        let key = make_endpoints(a.ip(), la.ip(), a.port(), la.port());
+        println!("key {:?}", key);
+        let val = s.as_raw_fd();
+        sock_hash.set(key, val);
+        println!("socket added to map");
+        // wait for close
+        let mut dummy_buf = [0u8; 1];
+        let read_result = s.read(&mut dummy_buf);
+        println!("read has returned {:?}", read_result);
+        sock_hash.delete(key);
     }
 }
 
@@ -110,5 +98,12 @@ fn make_endpoints(
         local_ip6: unsafe { core::mem::transmute(local_ip6.octets()) },   // TODO: safe conversion
         remote_port: u32::swap_bytes(remote_port.into()),
         local_port: local_port.into(), // host byte order
+    }
+}
+
+fn mapped_socket_addr(sa: &SocketAddr) -> SocketAddrV6 {
+    match sa {
+        SocketAddr::V4(sa_v4) => SocketAddrV6::new(sa_v4.ip().to_ipv6_mapped(), sa_v4.port(), 0, 0),
+        SocketAddr::V6(sa_v6) => *sa_v6,
     }
 }
