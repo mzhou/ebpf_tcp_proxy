@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io::Read;
 use std::net::{Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, TcpListener};
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, RawFd};
 
 use bpf_sys::{
     bpf_attach_type_BPF_SK_SKB_STREAM_PARSER, bpf_attach_type_BPF_SK_SKB_STREAM_VERDICT,
@@ -16,6 +16,7 @@ enum MainError {
     Accept(std::io::Error),
     AttachMap(redbpf::Error),
     Bind(std::io::Error),
+    GetSockOpt(nix::Error),
     Loader(LoaderError),
     LocalAddr(std::io::Error),
     MapCast,
@@ -32,6 +33,7 @@ impl fmt::Display for MainError {
                 Accept(e) => format!("accept {}", e),
                 AttachMap(e) => format!("attach map {:?}", e),
                 Bind(e) => format!("bind {}", e),
+                GetSockOpt(e) => format!("getsockopt {}", e),
                 Loader(e) => format!("loader {:?}", e),
                 LocalAddr(e) => format!("local_addr {}", e),
                 Map => format!("map not found in ebpf program"),
@@ -72,6 +74,8 @@ fn main() -> Result<(), MainError> {
         let (mut s, sa) = ss.accept().map_err(MainError::Accept)?;
         let a = mapped_socket_addr(&sa);
         println!("accepted from {}", a);
+        let mss = nix::sys::socket::getsockopt(s.as_raw_fd(), TcpMaxSeg{}).map_err(MainError::GetSockOpt)?;
+        println!("mss {}", mss);
         let la = mapped_socket_addr(&s.local_addr().map_err(MainError::LocalAddr)?);
         println!("remote {} local {}", a, la);
         let key = make_endpoints(a.ip(), la.ip(), a.port(), la.port());
@@ -105,5 +109,23 @@ fn mapped_socket_addr(sa: &SocketAddr) -> SocketAddrV6 {
     match sa {
         SocketAddr::V4(sa_v4) => SocketAddrV6::new(sa_v4.ip().to_ipv6_mapped(), sa_v4.port(), 0, 0),
         SocketAddr::V6(sa_v6) => *sa_v6,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct TcpMaxSeg {
+}
+
+impl nix::sys::socket::GetSockOpt for TcpMaxSeg {
+    type Val = i32;
+
+    fn get(&self, fd: RawFd) -> nix::Result<Self::Val> {
+        unsafe {
+            let mut val: i32 = 0;
+            let mut len: libc::socklen_t = core::mem::size_of::<i32>() as libc::socklen_t;
+            let res = libc::getsockopt(fd, libc::IPPROTO_TCP, libc::TCP_MAXSEG, &mut val as *mut _ as *mut libc::c_void, &mut len as *mut libc::socklen_t);
+            nix::errno::Errno::result(res)?;
+            Ok(val)
+        }
     }
 }
